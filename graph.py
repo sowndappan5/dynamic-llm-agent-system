@@ -24,6 +24,9 @@ class GraphState(TypedDict):
     question: str
     category: Optional[str]
     output: Optional[str]
+    parameter_extraction_success: Optional[str]
+    tool_execution_success: Optional[str]
+    error_message: Optional[str]
 
 # ----------------- Nodes -----------------
 def classifier_node(state: GraphState) -> GraphState:
@@ -36,11 +39,11 @@ def classifier_node(state: GraphState) -> GraphState:
     # Dynamically build the LLM's classification schema based on the live JSON
     DynamicCategorySchema = create_model(
         'llm_schema', 
-        category=(str, Field(description=f"Must pick EXACTLY one category from this list: general, {', '.join(tools)}"))
+        category=(str, Field(description=f"Must pick EXACTLY one category from this list: general, need_tool, {', '.join(tools)}. Choose 'need_tool' if the question requires a specific tool, function, or real-time data (like weather, calculator, search, clocks, API actions) that is NOT present in the existing tools list."))
     )
     
     prompt = ChatPromptTemplate.from_messages([
-        ("system", f"You are a router. Given a question, output the category name exactly as one of the following: general, {', '.join(tools)}."),
+        ("system", f"You are a router. Given a question, classify if it should be answered generally ('general'), requires a tool that doesn't exist yet ('need_tool'), or matches one of the existing tools: {', '.join(tools)}. Output exactly the matching category name."),
         ("human", "{question}"),
     ])
     category_res = (prompt | llm.with_structured_output(DynamicCategorySchema)).invoke({"question": state["question"]})
@@ -57,6 +60,9 @@ def general_node(state: GraphState) -> GraphState:
 def execute_tool_node(state: GraphState) -> GraphState:
     """The Single Universal Tool Node! Injects any Python file dynamically and runs it."""
     tool_name = state.get("category")
+    param_extract = "N/A"
+    tool_exec = "False"
+    err_msg = ""
     try:
         # Dynamically import ONLY the exact tool file requested!
         module_name = f"tools.{tool_name}"
@@ -70,21 +76,54 @@ def execute_tool_node(state: GraphState) -> GraphState:
             if hasattr(module, 'ToolInputSchema'):
                 schema = module.ToolInputSchema
                 if len(schema.model_fields) == 0:
-                    res = module.execute_tool(schema())
+                    param_extract = "True"
+                    try:
+                        res = module.execute_tool(schema())
+                        tool_exec = "True"
+                    except Exception as ex:
+                        res = f"Tool crash during execution: {ex}"
+                        err_msg = str(ex)
                 else:
-                    extractor = llm.with_structured_output(schema)
-                    clean_params = extractor.invoke(f"Extract precisely exactly the required schema parameters for this tool from this conversational query:\n\nQuery: '{state['question']}'")
-                    res = module.execute_tool(clean_params)
+                    try:
+                        extractor = llm.with_structured_output(schema)
+                        clean_params = extractor.invoke(f"Extract precisely exactly the required schema parameters for this tool from this conversational query:\n\nQuery: '{state['question']}'")
+                        param_extract = "True"
+                    except Exception as ex:
+                        param_extract = "False"
+                        raise Exception(f"Parameter extraction failed: {ex}")
+                        
+                    try:
+                        res = module.execute_tool(clean_params)
+                        tool_exec = "True"
+                    except Exception as ex:
+                        res = f"Tool crash during execution: {ex}"
+                        err_msg = str(ex)
             else:
-                res = module.execute_tool(state["question"])
+                try:
+                    res = module.execute_tool(state["question"])
+                    tool_exec = "True"
+                except Exception as ex:
+                    res = f"Tool crash during execution: {ex}"
+                    err_msg = str(ex)
             output = str(res)
         else:
             output = f"Error: Tool script '{tool_name}' failed to define execute_tool()"
+            err_msg = output
             
     except Exception as e:
         output = f"Tool crash: {e}"
+        err_msg = str(e)
+        if param_extract == "N/A":
+            param_extract = "False"
         
-    return {"question": state["question"], "category": tool_name, "output": output}
+    return {
+        "question": state["question"],
+        "category": tool_name,
+        "output": output,
+        "parameter_extraction_success": param_extract,
+        "tool_execution_success": tool_exec,
+        "error_message": err_msg
+    }
 
 def synthesizer_node(state: GraphState) -> GraphState:
     res = state.get("output", "")
@@ -116,21 +155,19 @@ def route_classifier(state: GraphState) -> str:
     category = state.get("category", "general")
     if category == "general":
         return "general"
+    elif category == "need_tool":
+        return "end"
     return "execute_tool"
 
-workflow.add_conditional_edges("classifier", route_classifier)
-
-# Wiring to finish
-workflow.add_edge("general", END)
-workflow.add_edge("execute_tool", "synthesizer")
-workflow.add_edge("synthesizer", END)
-
-# Compile exactly once!
-app = workflow.compile()ral":
-        return "general"
-    return "execute_tool"
-
-workflow.add_conditional_edges("classifier", route_classifier)
+workflow.add_conditional_edges(
+    "classifier",
+    route_classifier,
+    {
+        "general": "general",
+        "execute_tool": "execute_tool",
+        "end": END
+    }
+)
 
 # Wiring to finish
 workflow.add_edge("general", END)

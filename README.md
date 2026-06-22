@@ -1,199 +1,156 @@
-# Meta Agent
+<p align="center">
+  <img src="assets/adaptbot-banner.png" width="100%">
+</p>
 
-Meta Agent is a dynamic AI agent system that can answer normal questions, route tool-based requests through a static LangGraph workflow, and generate or modify its own Python tools at runtime.
+# AdaptBot
 
-The core idea is simple: the graph stays permanent, but the toolset does not. New tools are written as individual Python files in `tools/`, registered in `tools_registry.json`, and loaded dynamically when the agent needs them.
+Dynamic self-extending AI agent with static LangGraph orchestration.
+# AdaptBot
 
-## What It Does
+AdaptBot is a dynamic, self-extending AI agent system that can answer general questions, route tool-based requests through a static LangGraph workflow, and generate, modify, or delete Python tools at runtime.
 
-- Serves a web chat interface with Flask
-- Supports a CLI chat loop for local testing
-- Uses LangGraph for static orchestration
-- Uses an OpenAI-compatible model endpoint via Groq
-- Dynamically creates, updates, and deletes tool files
-- Extracts structured parameters from natural language before tool execution
+Unlike traditional agent systems where tools are predefined and tightly coupled to the execution graph, AdaptBot keeps the orchestration layer fixed while allowing its capabilities to evolve dynamically. New tools are generated as standalone Python modules, registered automatically, and loaded at runtime without restarting the application or recompiling the graph.
+
+> [!TIP]
+> **Key Design Principles & Advantages:**
+> *   **✓ Graph compiled once:** The LangGraph is initialized only once on startup.
+> *   **✓ No graph rewiring:** Adding capabilities never changes the graph architecture.
+> *   **✓ No server restart:** Changes apply live without server downtime.
+> *   **✓ Runtime tool discovery:** Instantly reads available tools from the registry.
+> *   **✓ Dynamic module loading:** Uses on-demand Python imports/reloads.
+
+### Comparison of Approaches
+
+| Metric / Action | Approach A: Traditional Agent | Approach B: AdaptBot |
+| :--- | :--- | :--- |
+| **Add/Modify/Delete Tool** | Manual code writing | Automated on-the-fly generation |
+| **Application Lifecycle** | Requires app/server restart | Continues running seamlessly (zero downtime) |
+| **Graph Management** | Requires rewiring nodes and recompiling | Stays compiled once (runtime module loading) |
+| **Discovery Mechanism** | Hardcoded bindings | Dynamic file-based registry lookup |
+
+---
+
+## Key Features
+
+*   **Dynamic Tool Lifecycle:** Create, modify, and delete tools on the fly.
+*   **Static LangGraph Orchestrator:** Dynamic capability resolution at runtime without graph recompilation.
+*   **Automatic Discovery:** Uses a JSON registry-based system to register and load tools dynamically.
+*   **Universal Structured Parameter Extraction:** Automatic derivation of complex inputs from conversation history.
+*   **FastAPI & Modern UI:** A responsive, light-mode chat interface with interactive prompt cards.
+*   **Integrated Performance Benchmarks:** Dynamically logs execution latency, creation times, and success rates.
+
+---
 
 ## Architecture Overview
 
-This project follows the architecture described in [Architecture_Roadmap.md](./Architecture_Roadmap.md).
+![AdaptBot Architecture](assets/adaptbot_architecture.png)
 
-### 1. Intent split
+This project follows the architecture detailed in the **[architecture.md](architecture.md)** file.
 
-User input is first classified into one of two paths:
+1.  **Intent Classifier:** Separates incoming requests into `BUILD` (tool generation/management) or `CHAT` (general assistant or tool execution).
+2.  **Tool Management Graph (`tool_generator.py`):** Handles writing, modifying, and deleting tool code files in the `tools/` directory.
+3.  **Static Execution Graph (`graph.py`):** Routes chat queries through a stable graph containing a custom classifier, a general LLM response node, and a universal tool execution node.
+4.  **Universal Parameter Extractor:** Dynamically parses conversational history to extract structured properties based on the tool's `ToolInputSchema`.
 
-- `BUILD`: create, modify, or delete a tool
-- `CHAT`: answer with current capabilities
-
-### 2. Tool management graph
-
-`tool_generator1.py` handles dynamic tool lifecycle management:
-
-- decides whether the request is `CREATE`, `MODIFY`, or `DELETE`
-- writes each tool as an isolated file inside `tools/`
-- updates `tools_registry.json`
-
-This avoids maintaining one large monolithic tool file.
-
-### 3. Static execution graph
-
-`graph.py` defines a permanently compiled LangGraph with four stable nodes:
-
-- `classifier_node`
-- `general_node`
-- `execute_tool_node`
-- `synthesizer_node`
-
-Instead of recompiling the graph whenever a new tool is added, the graph reads the registry at runtime and dynamically imports the requested tool module.
-
-### 4. Universal structured extraction
-
-Each generated tool is expected to expose:
-
-```python
-class ToolInputSchema(BaseModel):
-    ...
-
-def execute_tool(params: ToolInputSchema) -> str:
-    ...
-```
-
-Before execution, the system uses the tool's `ToolInputSchema` to extract clean parameters from conversational user input. This keeps tools simple and avoids making every tool responsible for parsing raw prompts.
+---
 
 ## Repository Structure
 
 ```text
-Meta Agent/
-|- app.py                    # Flask web server
+AdaptBot/
+|- app.py                    # FastAPI web server & routes
 |- bot.py                    # CLI chat interface
-|- graph.py                  # Static LangGraph execution engine
-|- tool_generator1.py        # Dynamic tool creation/modification/deletion graph
-|- tools/
-|  |- clock.py               # Example tool
-|  |- weather.py             # Example tool
+|- graph.py                  # Static LangGraph execution workflow
+|- tool_generator.py        # Tool builder workflow (CREATE, MODIFY, DELETE)
+|- benchmark_logger.py       # Thread-safe CSV metrics logging helper
+|- benchmarks.csv            # Autogenerated log containing performance stats
+|- run_benchmark.py          # Script to run comprehensive benchmark suites
+|- tools_registry.json       # JSON file listing registered tools
+|- architecture.md           # System architecture design document
+|- tools/                    # Subdirectory containing generated Python tools
 |- templates/
-|  |- index.html             # Chat UI
-|- static/
-|  |- style.css              # UI styling
-|- tools_registry.json       # Runtime tool registry
-|- Architecture_Roadmap.md   # Architecture memory log and design rationale
+|  |- index.html             # Light-mode web chat interface
 ```
 
-## Current Flow
-
-1. User sends a message through the web app or CLI.
-2. The system classifies the message as `BUILD` or `CHAT`.
-3. If it is a build request, the tool generation graph creates, modifies, or deletes a tool file.
-4. If it is a normal query, the static LangGraph routes either to a general response or to a dynamically imported tool.
-5. Tool output is rewritten into a conversational response before being returned.
+---
 
 ## Tech Stack
 
-- Python
-- Flask
-- LangGraph
-- LangChain
-- Pydantic
-- `langchain-openai`
-- `python-dotenv`
-- OpenAI-compatible Groq endpoint using `openai/gpt-oss-20b`
+*   Python (>= 3.10)
+*   FastAPI & Uvicorn
+*   Jinja2 Templates
+*   LangGraph & LangChain
+*   Pydantic
+*   `langchain-openai` & `python-dotenv`
+*   Groq API endpoint (`openai/gpt-oss-20b`)
 
-## Setup
+---
 
-### 1. Clone the repository
+## Setup & Installation
 
+This project is configured to use [uv](https://github.com/astral-sh/uv) for fast package management, but standard pip is also supported.
+
+### 1. Clone the Repository
 ```bash
 git clone <your-repo-url>
-cd "Meta Agent"
+cd AdaptBot
 ```
 
-### 2. Create and activate a virtual environment
-
-```bash
-python -m venv .venv
-```
-
-Windows:
-
-```bash
-.venv\Scripts\activate
-```
-
-macOS/Linux:
-
-```bash
-source .venv/bin/activate
-```
-
-### 3. Install dependencies
-
-If you do not already have a `requirements.txt`, install the core packages manually:
-
-```bash
-pip install flask langgraph langchain langchain-openai pydantic python-dotenv requests
-```
-
-### 4. Configure environment variables
-
-Create a `.env` file in the project root:
-
+### 2. Configure Environment Variables
+Create a `.env` file in the root directory:
 ```env
 GROQ_API_KEY=your_groq_api_key_here
 ```
 
-## Running the Project
+### 3. Install Dependencies & Start Web Server
 
-### Run the web app
-
+#### Using `uv` (Recommended)
 ```bash
-python app.py
+# Start the web server (it installs dependencies automatically)
+uv run uvicorn app:app --reload
 ```
 
-Then open:
+#### Using standard `pip`
+```bash
+# Create and activate virtual environment
+python -m venv .venv
+# On Windows:
+.venv\Scripts\activate
+# On Linux/macOS:
+source .venv/bin/activate
 
+# Install dependencies
+pip install fastapi uvicorn jinja2 langchain langchain-core langchain-openai langgraph pydantic python-dotenv requests pytz
+
+# Start the server
+uvicorn app:app --reload
+```
+
+Once running, open your browser and navigate to:
 ```text
 http://127.0.0.1:8000
 ```
 
-### Run the CLI interface
+---
+
+## Running Benchmarks
+
+We log all user interactions, latencies, and tool execution statuses into `benchmarks.csv`. You can run a mock benchmark suite to populate and inspect these metrics:
 
 ```bash
-python bot.py
+python run_benchmark.py
 ```
+This runs a 9-step transaction testing general chat, tool creation, parameter extraction, tool modification, execution, and tool deletion.
 
-## Example Prompts
+### Local Benchmark Summary (Calculated from benchmarks.csv)
 
-Normal chat:
+| Operation / Metric | Success / Total | Success Rate | Average Latency |
+| :--- | :--- | :--- | :--- |
+| **Intent Classification** | 41 / 44 | 93.2% | ~2.5s |
+| **Tool Creation** | 9 / 11 | 81.8% | ~6.0s |
+| **Tool Modification** | 4 / 5 | 80.0% | ~7.9s |
+| **Tool Deletion** | 4 / 4 | 100.0% | ~2.5s |
+| **Parameter Extraction** | 5 / 5 | 100.0% | ~8.8s (included in execution) |
+| **Tool Execution** | 5 / 5 | 100.0% | ~8.8s |
 
-- `What time is it?`
-- `What's the weather in Chennai?`
-
-Tool-building requests:
-
-- `Build a random number generator tool`
-- `Modify the weather tool to accept country codes`
-- `Delete the clock tool`
-
-## Why This Project Is Interesting
-
-Most agent systems either:
-
-- hardcode tools ahead of time, or
-- require app restarts and graph rewiring when capabilities change
-
-This project takes a different approach:
-
-- the graph stays fixed
-- the tool inventory stays dynamic
-- the agent can expand its own capabilities through file-based tool generation
-
-That makes it a practical prototype for self-extending agent systems built on top of static orchestration frameworks.
-
-## Notes
-
-- The dynamic tools are stored as Python files, so generated code should be reviewed before production use.
-- `tools_registry.json` is the live source of truth for available tools.
-- The architecture roadmap includes future ideas for a true JIT execution engine beyond LangGraph's compile-time model.
-
-## License
-
-Add your preferred license here before publishing to GitHub.
+*Note: Latency calculations exclude network error states (such as temporary 401/400 API limits or invalid keys).*
